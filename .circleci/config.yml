@@ -1,6 +1,15 @@
 version: 2.1
 
-  
+commands:
+  destroy_environment:
+    docker:
+      - image: amazon/aws-cli
+    steps:
+      - run:
+          when: on_fail  
+          name: Destroy Env
+          command: |
+            aws cloudformation delete-stack --stack-name dev-stack-${CIRCLE_WORKFLOW_ID:0:5}
 
 jobs:
   create_infrastructure:
@@ -46,9 +55,17 @@ jobs:
             else 
               return 1
             fi
+      - run: 
+          name: failure
+          command: return 1
+
+      - destroy_environment
+
 workflows:
   mainWF:
     jobs:
       # - configure_infrastructure
-      # - create_infrastructure
-      - smoke_test
+      - create_infrastructure
+      - smoke_test:
+          requires:
+            - create_infrastructure
