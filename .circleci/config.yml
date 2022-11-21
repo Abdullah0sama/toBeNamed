@@ -15,7 +15,24 @@ jobs:
             --template-file template.yaml \
             --stack-name dev-stack-${CIRCLE_WORKFLOW_ID:0:5}
 
+  configure_infrastructure:
+    docker: 
+      - image: python:3
+    steps:
+      - checkout
+      - add_ssh_keys:
+          fingerprints: ["39:34:39:bd:63:00:24:8f:dc:f2:ef:b9:75:28:94:ea"]
+      - run:
+          name: Install Ansible
+          command: | 
+            python3 -m pip install ansible 
+
+      - run: 
+          name: Run playbook and configure server
+          command: ansible-playbook -i inventory main.yaml
+
 workflows:
   mainWF:
     jobs:
-      - create_infrastructure
+      - configure_infrastructure
+      # - create_infrastructure
