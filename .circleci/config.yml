@@ -2,8 +2,6 @@ version: 2.1
 
 commands:
   destroy_environment:
-    docker:
-      - image: amazon/aws-cli
     steps:
       - run:
           when: on_fail  
@@ -55,17 +53,80 @@ jobs:
             else 
               return 1
             fi
-      - run: 
-          name: failure
-          command: return 1
 
-      - destroy_environment
+  create_and_deploy_frontend:
+    docker:
+      - image: amazon/aws-cli
+    steps:
+      - checkout
+      - run:
+          name: Execute bucket.yml
+          command: | 
+            aws cloudformation deploy \
+            --template-file bucket.yaml \
+            --stack-name stack-bucket-${CIRCLE_WORKFLOW_ID:0:7} \
+            --parameter-overrides MyBucketName="mybucket-${CIRCLE_WORKFLOW_ID:0:7}"
+      - run:
+          name: Copy file
+          command: |
+            aws s3 cp index.html s3://mybucket-${CIRCLE_WORKFLOW_ID:0:7}
+  
+  get_last_deployment_id:
+    docker:
+      - image: amazon/aws-cli
+    steps:
+      - checkout
+      - run: yum install -y tar gzip
+      - run:
+          name: Fetch and save the old pipeline ID (bucket name) responsible for the last release.
+          command: |
+            aws cloudformation \
+            list-exports --query "Exports[?Name==\`PipelineID\`].Value" \
+            --no-paginate --output text > ~/textfile.txt
+      - persist_to_workspace:
+          root: ~/
+          paths: 
+            - textfile.txt 
+
+  promote_to_production:
+    docker:
+      - image: amazon/aws-cli
+    steps:
+      - checkout
+      - run:
+          name: Execute cloudfront.yml
+          command: |
+            aws cloudformation deploy \
+            --template-file cloudfront.yaml \
+            --stack-name prod-distro \
+            --parameter-overrides PipelineID="mybucket-${CIRCLE_WORKFLOW_ID:0:7}"
+
+
+  clean_up_old_front_end:
+    docker:
+      - image: amazon/aws-cli
+    steps:
+      - checkout
+      - run: yum install -y tar gzip
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Destroy the previous S3 bucket and CloudFormation stack. 
+          # Use $OldBucketID environment variable or mybucket644752792305 below.
+          # Similarly, you can create and use $OldStackID environment variable in place of production-distro 
+          command: |
+            export OldBucketID=$(cat ~/textfile.txt)
+            aws s3 rm "s3://${OldBucketID}" --recursive
 
 workflows:
   mainWF:
-    jobs:
-      # - configure_infrastructure
-      - create_infrastructure
-      - smoke_test:
+    jobs: 
+      - create_and_deploy_frontend
+      - promote_to_production:
           requires:
-            - create_infrastructure
+            - create_and_deploy_frontend
+      - get_last_deployment_id
+      - clean_up_old_front_end:
+          requires:
+            - get_last_deployment_id
+            - promote_to_production
